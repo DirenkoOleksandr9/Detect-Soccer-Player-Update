@@ -4,14 +4,14 @@ import argparse
 from player_detection import SoccerPlayerDetector
 from bytetrack_tracker import process_tracking
 from reid_system import PlayerReID
-from event_detection import EventDetector
+from advanced_event_detection import AdvancedEventDetector
 from video_assembly import VideoAssembler
 
 class SoccerHighlightPipeline:
     def __init__(self):
         self.detector = SoccerPlayerDetector()
         self.reid = PlayerReID()
-        self.event_detector = EventDetector()
+        self.event_detector = None
         self.assembler = VideoAssembler()
 
     def run_full_pipeline(self, video_path, target_player_id, output_dir="output"):
@@ -41,20 +41,33 @@ class SoccerHighlightPipeline:
         print("✓ Long-term Re-ID completed")
         print()
 
-        print("Stage 4: Event Detection")
+        print("Stage 4: Advanced Event Detection")
+        import cv2
+        cap = cv2.VideoCapture(video_path)
+        video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        cap.release()
+        
+        self.event_detector = AdvancedEventDetector(video_width, video_height, fps)
         events_path = os.path.join(output_dir, "events.json")
-        self.event_detector.detect_events(video_path, long_tracks_path, events_path)
+        events = self.event_detector.detect_events(long_tracks_path, events_path)
         
         player_events_path = os.path.join(output_dir, "player_events.json")
-        self.event_detector.filter_player_events(events_path, long_tracks_path, target_player_id, player_events_path)
-        print("✓ Event detection completed")
+        player_events = self.event_detector.filter_player_events(events_path, target_player_id, player_events_path)
+        print(f"✓ Advanced event detection completed! Found {len(events)} total events, {len(player_events)} for player {target_player_id}")
         print()
 
         print("Stage 5: Video Assembly")
         highlight_path = os.path.join(output_dir, f"player_{target_player_id}_highlights.mp4")
         summary_path = os.path.join(output_dir, f"player_{target_player_id}_summary.mp4")
         
-        self.assembler.assemble_highlight_reel(video_path, player_events_path, long_tracks_path, target_player_id, highlight_path)
+        success = self.assembler.assemble_highlight_reel(video_path, player_events_path, highlight_path, target_player_id)
+        if success:
+            print(f"✓ Highlight reel created: {highlight_path}")
+        else:
+            print("✗ Failed to create highlight reel")
+        
         self.assembler.create_player_summary(video_path, long_tracks_path, target_player_id, summary_path)
         print("✓ Video assembly completed")
         print()
