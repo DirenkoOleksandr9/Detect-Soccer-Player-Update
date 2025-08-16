@@ -91,6 +91,94 @@ source soccer_env/bin/activate  # On Windows: soccer_env\Scripts\activate
 pip install -r requirements.txt
 ```
 
+### Platform-specific setup (Windows, macOS, Linux)
+
+Follow the steps below for a clean local CPU/GPU setup. Use absolute paths when running the CLI.
+
+#### Windows (10/11)
+```powershell
+# 1) Python 3.10+ (if not installed)
+#    https://www.python.org/downloads/windows/
+
+# 2) FFmpeg
+winget install Gyan.FFmpeg  # or: choco install ffmpeg
+
+# 3) Project setup
+git clone https://github.com/DirenkoOleksandr9/Detect-Soccer-Player-Update.git
+cd Detect-Soccer-Player-Update
+py -m venv soccer_env
+.\n+soccer_env\Scripts\activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+# 4) (Optional NVIDIA GPU) Install PyTorch with CUDA
+# Pick the CUDA that matches your drivers: https://pytorch.org/get-started/locally/
+# Example (CUDA 12.1):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# 5) Verify
+python --version
+pip --version
+ffmpeg -version
+python -c "import torch,cv2; print('torch',torch.__version__,'cuda',torch.cuda.is_available(),'cv2',cv2.__version__)"
+```
+
+#### macOS (Intel & Apple Silicon)
+```bash
+# 1) Homebrew (if not installed): https://brew.sh
+
+# 2) FFmpeg
+brew install ffmpeg
+
+# 3) Python venv and deps
+git clone https://github.com/DirenkoOleksandr9/Detect-Soccer-Player-Update.git
+cd Detect-Soccer-Player-Update
+python3 -m venv soccer_env
+source soccer_env/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+# 4) PyTorch
+# a) CPU-only (works on any Mac):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# b) Apple Silicon GPU (MPS) support (macOS 12.3+):
+pip install torch torchvision  # Official wheels enable MPS automatically if available
+
+# 5) Verify
+python3 --version
+pip --version
+ffmpeg -version
+python -c "import torch,cv2; print('mps',torch.backends.mps.is_available() if hasattr(torch.backends,'mps') else False)"
+```
+
+#### Linux (Ubuntu/Debian)
+```bash
+sudo apt-get update
+sudo apt-get install -y python3-venv python3-pip ffmpeg
+
+git clone https://github.com/DirenkoOleksandr9/Detect-Soccer-Player-Update.git
+cd Detect-Soccer-Player-Update
+python3 -m venv soccer_env
+source soccer_env/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+# (Optional NVIDIA GPU) Install PyTorch with CUDA
+# Pick the CUDA that matches your installed drivers: https://pytorch.org/get-started/locally/
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Verify
+python3 --version
+pip --version
+ffmpeg -version
+python -c "import torch,cv2; print('cuda',torch.cuda.is_available(),'cv2',cv2.__version__)"
+```
+
+Common pitfalls:
+- If `ffmpeg` is not found, install it and restart the shell/terminal.
+- If `pip` is missing, ensure you activated the virtualenv and upgraded `pip` with `python -m pip install --upgrade pip`.
+- On servers without GUI libraries, `opencv-python-headless` (already in `requirements.txt`) avoids OpenGL issues.
+
 ## 🎬 Usage
 
 ### Quick Start
