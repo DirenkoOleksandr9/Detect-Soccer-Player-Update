@@ -1,0 +1,12 @@
+{
+  "name": "Python 3",
+  "image": "python:3.10-slim",
+  "postCreateCommand": "pip install -r requirements.txt",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python"
+      ]
+    }
+  }
+}
