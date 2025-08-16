@@ -1,0 +1,17 @@
+{
+  "name": "Soccer Highlights Dev",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".devcontainer"
+  },
+  "postCreateCommand": "python3 -m pip install --upgrade pip && pip install -r requirements.txt",
+  "postStartCommand": "bash scripts/print_welcome.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  }
+}

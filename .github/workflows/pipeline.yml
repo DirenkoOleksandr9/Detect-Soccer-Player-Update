@@ -1,0 +1,42 @@
+name: pipeline
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libsm6 libxext6
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Prepare sample video
+        run: |
+          mkdir -p output
+          # Use existing small clip or generate a dummy short video for CI
+          if [ ! -f 9.mp4 ]; then ffmpeg -f lavfi -i testsrc=size=640x360:rate=30 -t 5 -pix_fmt yuv420p 9.mp4; fi
+      - name: Run pipeline (detection only for CI)
+        run: |
+          python - << 'PY'
+          import os
+          from main_pipeline import SoccerHighlightPipeline
+          p = SoccerHighlightPipeline()
+          p.run_detection_only('9.mp4', 'output')
+          PY
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: outputs
+          path: output/*
