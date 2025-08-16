@@ -1,7 +1,7 @@
 {
   "name": "Python 3",
   "image": "python:3.10-slim",
-  "postCreateCommand": "pip install -r requirements.txt",
+  "postCreateCommand": "apt-get update && apt-get install -y ffmpeg && python3 -m ensurepip --upgrade && python3 -m pip install -r requirements.txt",
   "customizations": {
     "vscode": {
       "extensions": [
