@@ -151,6 +151,8 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+.devcontainer/
+.github/
 *.swp
 *.swo
 *~
