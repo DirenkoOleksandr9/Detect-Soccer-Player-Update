@@ -5,67 +5,56 @@ import json
 from ultralytics import YOLO
 from tqdm import tqdm
 import os
+from typing import List, Dict
+
+# Force headless mode to avoid OpenGL issues
+os.environ['OPENCV_VIDEOIO_PRIORITY_MSMF'] = '0'
+os.environ['OPENCV_VIDEOIO_DEBUG'] = '1'
 
 class SoccerPlayerDetector:
-    def __init__(self, model_path=None, conf_thresh: float = 0.35, min_area: int = 1000):
+    def __init__(self, model_name: str = 'yolov8n.pt', conf_thresh: float = 0.4, min_area: int = 1000):
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        if model_path and os.path.exists(model_path):
-            self.model = YOLO(model_path)
-        else:
-            self.model = YOLO('yolov8n.pt')
+        self.model = YOLO(model_name)
         self.model.to(self.device)
         self.conf_thresh = conf_thresh
         self.min_area = min_area
-        
-    def detect_frame(self, frame):
-        results = self.model(frame, classes=[0], imgsz=960, verbose=False)
-        detections = []
-        for result in results:
-            boxes = result.boxes
-            if boxes is not None:
-                for box in boxes:
-                    x1, y1, x2, y2 = [int(c) for c in box.xyxy[0].tolist()]
-                    conf = float(box.conf[0])
-                    if conf >= self.conf_thresh:
-                        if (x2 - x1) * (y2 - y1) < self.min_area:
-                            continue
-                        detections.append({
-                            'bbox': [x1, y1, x2, y2],
-                            'confidence': conf,
-                            'class': 0,
-                            'class_name': 'person'
-                        })
-        return detections
-    
-    def process_video(self, video_path, output_path):
+        self.target_classes = [0, 32] # 0 is person, 32 is sports ball
+
+    def process_video(self, video_path: str, output_path: str) -> List[Dict]:
         cap = cv2.VideoCapture(video_path)
-        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        if not cap.isOpened():
+            print(f"Error: Could not open video {video_path}")
+            return []
+        
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        
         all_detections = []
-        frame_idx = 0
         
-        with tqdm(total=total_frames, desc="Detecting players") as pbar:
-            while cap.isOpened():
+        with tqdm(total=total_frames, desc="Stage 1: Detecting Players & Ball") as pbar:
+            for frame_idx in range(total_frames):
                 ret, frame = cap.read()
-                if not ret:
-                    break
+                if not ret: break
                 
-                detections = self.detect_frame(frame)
-                frame_data = {
-                    "frame_id": frame_idx,
-                    "detections": detections
-                }
-                all_detections.append(frame_data)
+                results = self.model(frame, classes=self.target_classes, imgsz=960, verbose=False)
                 
-                frame_idx += 1
+                frame_detections = {'players': [], 'ball': None}
+                if len(results) > 0 and results[0].boxes is not None:
+                    for box in results[0].boxes:
+                        if box.conf[0] >= self.conf_thresh:
+                            x1, y1, x2, y2 = [int(c) for c in box.xyxy[0].tolist()]
+                            if (x2 - x1) * (y2 - y1) < self.min_area: continue
+                            
+                            detection = {'bbox': [x1, y1, x2, y2], 'confidence': float(box.conf[0])}
+                            if int(box.cls[0]) == 0: # Person
+                                frame_detections['players'].append(detection)
+                            elif int(box.cls[0]) == 32: # Sports Ball
+                                if frame_detections['ball'] is None or detection['confidence'] > frame_detections['ball']['confidence']:# Prioritize higher confidence ball
+                                    frame_detections['ball'] = detection
+                
+                all_detections.append({"frame_id": frame_idx, "detections": frame_detections})
                 pbar.update(1)
         
         cap.release()
-        
-        with open(output_path, 'w') as f:
-            json.dump(all_detections, f)
-        
+        with open(output_path, 'w') as f: json.dump(all_detections, f, indent=2)
         return all_detections
 
 if __name__ == "__main__":
