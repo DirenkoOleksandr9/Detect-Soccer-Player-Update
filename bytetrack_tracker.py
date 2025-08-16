@@ -88,33 +88,26 @@ class ByteTracker:
         self.next_id = 1
 
     def iou_distance(self, tracks, detections):
-        if len(tracks) == 0 or len(detections) == 0:
-            return np.array([])
-        
-        track_boxes = np.array([track.bbox for track in tracks])
-        detection_boxes = np.array([det['bbox'] for det in detections])
-        
+        track_boxes = np.array([track.bbox for track in tracks]) if len(tracks) > 0 else np.empty((0, 4))
+        detection_boxes = np.array([det['bbox'] for det in detections]) if len(detections) > 0 else np.empty((0, 4))
+        iou_matrix = np.zeros((len(track_boxes), len(detection_boxes)), dtype=float)
+        if len(track_boxes) == 0 or len(detection_boxes) == 0:
+            return 1 - iou_matrix
         def box_iou(box1, box2):
             x1 = max(box1[0], box2[0])
             y1 = max(box1[1], box2[1])
             x2 = min(box1[2], box2[2])
             y2 = min(box1[3], box2[3])
-            
             if x2 <= x1 or y2 <= y1:
                 return 0.0
-            
             intersection = (x2 - x1) * (y2 - y1)
             area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
             area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
             union = area1 + area2 - intersection
-            
             return intersection / union if union > 0 else 0.0
-        
-        iou_matrix = np.zeros((len(tracks), len(detections)))
-        for i, track in enumerate(tracks):
-            for j, detection in enumerate(detections):
-                iou_matrix[i, j] = box_iou(track.bbox, detection['bbox'])
-        
+        for i, tbox in enumerate(track_boxes):
+            for j, dbox in enumerate(detection_boxes):
+                iou_matrix[i, j] = box_iou(tbox, dbox)
         return 1 - iou_matrix
 
     def update(self, detections):
@@ -131,7 +124,7 @@ class ByteTracker:
         
         if len(track_pool) > 0:
             iou_dists = self.iou_distance(track_pool, detections)
-            if len(iou_dists) > 0:
+            if iou_dists.size > 0:
                 track_indices, detection_indices = linear_sum_assignment(iou_dists)
                 for track_idx, detection_idx in zip(track_indices, detection_indices):
                     if iou_dists[track_idx, detection_idx] <= 1 - self.match_thresh:
@@ -151,7 +144,7 @@ class ByteTracker:
                     lost_tracks.append(track)
         
         for detection in detections:
-            if detection['confidence'] > self.track_thresh:
+            if detection['confidence'] >= self.track_thresh:
                 track = Track(detection, self.next_id)
                 self.next_id += 1
                 activated_tracks.append(track)

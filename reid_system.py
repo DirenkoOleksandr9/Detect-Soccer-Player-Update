@@ -8,6 +8,7 @@ import json
 from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 import math
+from sklearn.cluster import KMeans
 
 class PlayerFeatureExtractor(nn.Module):
     def __init__(self):
@@ -159,6 +160,8 @@ class PlayerReID:
             all_tracklets = json.load(f)
         
         cap = cv2.VideoCapture(video_path)
+        frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         long_tracks = []
         
         for frame_data in tqdm(all_tracklets, desc="Re-identifying players"):
@@ -174,6 +177,12 @@ class PlayerReID:
             
             for track in frame_data['tracks']:
                 x1, y1, x2, y2 = track['bbox']
+                x1 = max(0, min(frame_w - 1, int(x1)))
+                y1 = max(0, min(frame_h - 1, int(y1)))
+                x2 = max(0, min(frame_w, int(x2)))
+                y2 = max(0, min(frame_h, int(y2)))
+                if x2 <= x1 or y2 <= y1:
+                    continue
                 patch = frame[y1:y2, x1:x2]
                 center = ((x1 + x2) // 2, (y1 + y2) // 2)
                 
@@ -202,7 +211,29 @@ class PlayerReID:
             long_tracks.append(frame_tracks)
         
         cap.release()
-        
+        # Optional team clustering by dominant kit color (robust to sklearn version)
+        try:
+            all_colors = []
+            for info in self.global_players.values():
+                dom = info['features'].get('color')
+                if dom is not None:
+                    all_colors.append(dom[:3] if len(dom) >= 3 else dom)
+            if len(all_colors) >= 2:
+                kmeans = KMeans(n_clusters=2, random_state=0, n_init=10).fit(np.array(all_colors))
+                labels = kmeans.labels_.tolist()
+                idx = 0
+                for pid, info in self.global_players.items():
+                    if info['features'].get('color') is not None:
+                        info['team'] = int(labels[idx])
+                        idx += 1
+                for frame_data in long_tracks:
+                    for p in frame_data['players']:
+                        team = self.global_players.get(p['permanent_id'], {}).get('team')
+                        if team is not None:
+                            p['team'] = int(team)
+        except Exception:
+            pass
+
         with open(output_path, 'w') as f:
             json.dump(long_tracks, f)
         

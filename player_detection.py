@@ -7,34 +7,34 @@ from tqdm import tqdm
 import os
 
 class SoccerPlayerDetector:
-    def __init__(self, model_path=None):
+    def __init__(self, model_path=None, conf_thresh: float = 0.35, min_area: int = 1000):
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         if model_path and os.path.exists(model_path):
             self.model = YOLO(model_path)
         else:
             self.model = YOLO('yolov8n.pt')
         self.model.to(self.device)
+        self.conf_thresh = conf_thresh
+        self.min_area = min_area
         
     def detect_frame(self, frame):
-        results = self.model(frame, verbose=False)
+        results = self.model(frame, classes=[0], imgsz=960, verbose=False)
         detections = []
-        
         for result in results:
             boxes = result.boxes
             if boxes is not None:
                 for box in boxes:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    x1, y1, x2, y2 = [int(c) for c in box.xyxy[0].tolist()]
                     conf = float(box.conf[0])
-                    cls = int(box.cls[0])
-                    
-                    if conf > 0.4:
+                    if conf >= self.conf_thresh:
+                        if (x2 - x1) * (y2 - y1) < self.min_area:
+                            continue
                         detections.append({
                             'bbox': [x1, y1, x2, y2],
                             'confidence': conf,
-                            'class': cls,
-                            'class_name': self.model.names[cls]
+                            'class': 0,
+                            'class_name': 'person'
                         })
-        
         return detections
     
     def process_video(self, video_path, output_path):
