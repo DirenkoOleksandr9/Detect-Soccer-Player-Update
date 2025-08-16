@@ -6,6 +6,3 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspaces/app
-COPY requirements.txt /workspaces/app/requirements.txt
-RUN pip install --upgrade pip && pip install -r requirements.txt
-COPY . /workspaces/app
