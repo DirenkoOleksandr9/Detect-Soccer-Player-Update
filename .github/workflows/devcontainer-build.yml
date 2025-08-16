@@ -1,32 +1,33 @@
 name: devcontainer-build
 
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
+# Disabled - using pre-built Python image instead of custom Dockerfile
+# on:
+#   push:
+#     branches: [ main ]
+#   workflow_dispatch:
 
-permissions:
-  contents: read
-  packages: write
+# permissions:
+#   contents: read
+#   packages: write
 
-jobs:
-  build-push-devcontainer:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Prepare image name (lowercase)
-        run: |
-          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}/codespace:latest" >> $GITHUB_ENV
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push devcontainer image
-        uses: docker/build-push-action@v5
-        with:
-          context: .devcontainer
-          file: .devcontainer/Dockerfile
-          push: true
-          tags: ${{ env.IMAGE_NAME }}
+# jobs:
+#   build-push-devcontainer:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - name: Prepare image name (lowercase)
+#         run: |
+#           echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}/codespace:latest" >> $GITHUB_ENV
+#       - uses: docker/setup-buildx-action@v3
+#       - uses: docker/login-action@v3
+#         with:
+#           registry: ghcr.io
+#           username: ${{ github.actor }}
+#           password: ${{ secrets.GITHUB_TOKEN }}
+#       - name: Build and push devcontainer image
+#         uses: docker/build-push-action@v5
+#         with:
+#           context: .devcontainer
+#           file: .devcontainer/Dockerfile
+#           push: true
+#           tags: ${{ env.IMAGE_NAME }}
