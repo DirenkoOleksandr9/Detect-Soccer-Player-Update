@@ -11,4 +11,4 @@ pillow>=8.3.0
 scenedetect[opencv]>=0.6.0
 scipy>=1.7.0
 filterpy>=1.4.5
-torchreid>=1.4.0
+# torchreid>=1.4.0  # Optional - will use fallback if not available
