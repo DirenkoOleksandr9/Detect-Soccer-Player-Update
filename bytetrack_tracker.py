@@ -1,187 +1,254 @@
-import numpy as np
 import cv2
-from scipy.optimize import linear_sum_assignment
+import numpy as np
 import json
 from tqdm import tqdm
+from typing import List, Dict, Tuple
+from scipy.optimize import linear_sum_assignment
+from filterpy.kalman import KalmanFilter
+import torch
 
-class KalmanFilter:
-    def __init__(self):
-        self.kalman = cv2.KalmanFilter(7, 4)
-        self.kalman.measurementMatrix = np.array([[1, 0, 0, 0, 0, 0, 0],
-                                                 [0, 1, 0, 0, 0, 0, 0],
-                                                 [0, 0, 1, 0, 0, 0, 0],
-                                                 [0, 0, 0, 1, 0, 0, 0]], np.float32)
-        self.kalman.transitionMatrix = np.array([[1, 0, 0, 0, 1, 0, 0],
-                                                [0, 1, 0, 0, 0, 1, 0],
-                                                [0, 0, 1, 0, 0, 0, 1],
-                                                [0, 0, 0, 1, 0, 0, 0],
-                                                [0, 0, 0, 0, 1, 0, 0],
-                                                [0, 0, 0, 0, 0, 1, 0],
-                                                [0, 0, 0, 0, 0, 0, 1]], np.float32)
-        self.kalman.processNoiseCov = np.array([[1, 0, 0, 0, 0, 0, 0],
-                                               [0, 1, 0, 0, 0, 0, 0],
-                                               [0, 0, 1, 0, 0, 0, 0],
-                                               [0, 0, 0, 1, 0, 0, 0],
-                                               [0, 0, 0, 0, 1, 0, 0],
-                                               [0, 0, 0, 0, 0, 1, 0],
-                                               [0, 0, 0, 0, 0, 0, 1]], np.float32) * 0.03
-
-    def predict(self):
-        return self.kalman.predict()
-
-    def update(self, measurement):
-        return self.kalman.correct(measurement)
-
-class Track:
-    def __init__(self, detection, track_id):
-        self.track_id = track_id
-        self.kalman = KalmanFilter()
-        self.bbox = detection['bbox']
-        self.confidence = detection['confidence']
-        self.age = 1
-        self.hits = 1
+class STrack:
+    def __init__(self, tlwh, score):
+        self._tlwh = np.asarray(tlwh, dtype=np.float32)
+        self.score = score
+        self.track_id = 0
+        self.state = 'new'
+        self.is_activated = False
+        self.frame_id = 0
+        self.start_frame = 0
         self.time_since_update = 0
         
-        x1, y1, x2, y2 = self.bbox
-        center_x = (x1 + x2) / 2
-        center_y = (y1 + y2) / 2
-        width = x2 - x1
-        height = y2 - y1
+        self.kalman_filter = self.init_kalman_filter()
+        self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
         
-        self.kalman.kalman.statePre = np.array([[center_x], [center_y], [width], [height], [0], [0], [0]], np.float32)
-        self.kalman.kalman.statePost = np.array([[center_x], [center_y], [width], [height], [0], [0], [0]], np.float32)
-
+    def init_kalman_filter(self):
+        kf = KalmanFilter(dim_x=8, dim_z=4)
+        kf.F = np.array([
+            [1, 0, 0, 0, 1, 0, 0, 0],
+            [0, 1, 0, 0, 0, 1, 0, 0],
+            [0, 0, 1, 0, 0, 0, 1, 0],
+            [0, 0, 0, 1, 0, 0, 0, 1],
+            [0, 0, 0, 0, 1, 0, 0, 0],
+            [0, 0, 0, 0, 0, 1, 0, 0],
+            [0, 0, 0, 0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 0, 0, 0, 1]
+        ], dtype=np.float32)
+        
+        kf.H = np.array([
+            [1, 0, 0, 0, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0, 0, 0, 0],
+            [0, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 1, 0, 0, 0, 0]
+        ], dtype=np.float32)
+        
+        kf.R[2:, 2:] *= 10.
+        kf.P[4:, 4:] *= 1000.
+        kf.P *= 10.
+        kf.Q[-1, -1] *= 0.01
+        kf.Q[4:, 4:] *= 0.01
+        
+        return kf
+    
+    def tlwh_to_xyah(self, tlwh):
+        ret = np.asarray(tlwh).copy()
+        ret[2:] += ret[:2]
+        ret[:2] = ret[:2] + ret[2:] / 2
+        ret[2] /= ret[3]
+        return ret
+    
+    def xyah_to_tlwh(self, xyah):
+        ret = np.asarray(xyah).copy()
+        ret[2] *= ret[3]
+        ret[:2] -= ret[2:] / 2
+        return ret
+    
     def predict(self):
-        prediction = self.kalman.predict()
-        center_x, center_y, width, height = prediction[:4].flatten()
-        x1 = center_x - width / 2
-        y1 = center_y - height / 2
-        x2 = center_x + width / 2
-        y2 = center_y + height / 2
-        self.bbox = [int(x1), int(y1), int(x2), int(y2)]
-        self.age += 1
-        self.time_since_update += 1
-
+        self.mean, self.covariance = self.kalman_filter.predict(self.mean, self.covariance)
+        self._tlwh = self.xyah_to_tlwh(self.mean[:4])
+    
     def update(self, detection):
-        self.bbox = detection['bbox']
-        self.confidence = detection['confidence']
-        self.hits += 1
+        self.mean, self.covariance = self.kalman_filter.update(
+            self.mean, self.covariance, self.tlwh_to_xyah(detection['bbox'])
+        )
+        self._tlwh = self.xyah_to_tlwh(self.mean[:4])
+        self.score = detection['confidence']
+    
+    def activate(self, frame_id, track_id):
+        self.track_id = track_id
+        self.frame_id = frame_id
+        self.start_frame = frame_id
+        self.state = 'tracked'
+        self.is_activated = True
+    
+    def re_activate(self, new_track, frame_id):
+        self._tlwh = new_track['bbox']
+        self.score = new_track['confidence']
+        self.update(new_track)
+        self.state = 'tracked'
+        self.is_activated = True
+        self.frame_id = frame_id
         self.time_since_update = 0
-        
-        x1, y1, x2, y2 = self.bbox
-        center_x = (x1 + x2) / 2
-        center_y = (y1 + y2) / 2
-        width = x2 - x1
-        height = y2 - y1
-        
-        measurement = np.array([[center_x], [center_y], [width], [height]], np.float32)
-        self.kalman.update(measurement)
+    
+    @property
+    def tlwh(self):
+        return self._tlwh.copy()
+    
+    @property
+    def tlbr(self):
+        ret = self._tlwh.copy()
+        ret[2:] += ret[:2]
+        return ret
+
+def iou_distance(atracks, btracks):
+    if not atracks or not btracks:
+        return np.empty((0, 0))
+    
+    atlbrs = np.array([track.tlbr for track in atracks])
+    btlbrs = np.array([track.tlbr for track in btracks])
+    
+    ious = np.zeros((len(atlbrs), len(btlbrs)), dtype=float)
+    
+    for i, a in enumerate(atlbrs):
+        for j, b in enumerate(btlbrs):
+            box_inter = [
+                max(a[0], b[0]), max(a[1], b[1]),
+                min(a[2], b[2]), min(a[3], b[3])
+            ]
+            inter_area = max(0, box_inter[2] - box_inter[0]) * max(0, box_inter[3] - box_inter[1])
+            union_area = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter_area
+            
+            if union_area > 0:
+                ious[i, j] = inter_area / union_area
+    
+    return 1 - ious
 
 class ByteTracker:
-    def __init__(self, track_thresh=0.5, track_buffer=30, match_thresh=0.8):
-        self.track_thresh = track_thresh
-        self.track_buffer = track_buffer
-        self.match_thresh = match_thresh
-        self.tracked_tracks = []
-        self.lost_tracks = []
+    def __init__(self, high_thresh=0.6, low_thresh=0.1, max_time_lost=30):
+        self.tracked_stracks = []
+        self.lost_stracks = []
+        self.removed_stracks = []
         self.frame_id = 0
-        self.next_id = 1
-
-    def iou_distance(self, tracks, detections):
-        track_boxes = np.array([track.bbox for track in tracks]) if len(tracks) > 0 else np.empty((0, 4))
-        detection_boxes = np.array([det['bbox'] for det in detections]) if len(detections) > 0 else np.empty((0, 4))
-        iou_matrix = np.zeros((len(track_boxes), len(detection_boxes)), dtype=float)
-        if len(track_boxes) == 0 or len(detection_boxes) == 0:
-            return 1 - iou_matrix
-        def box_iou(box1, box2):
-            x1 = max(box1[0], box2[0])
-            y1 = max(box1[1], box2[1])
-            x2 = min(box1[2], box2[2])
-            y2 = min(box1[3], box2[3])
-            if x2 <= x1 or y2 <= y1:
-                return 0.0
-            intersection = (x2 - x1) * (y2 - y1)
-            area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
-            area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
-            union = area1 + area2 - intersection
-            return intersection / union if union > 0 else 0.0
-        for i, tbox in enumerate(track_boxes):
-            for j, dbox in enumerate(detection_boxes):
-                iou_matrix[i, j] = box_iou(tbox, dbox)
-        return 1 - iou_matrix
-
+        self.track_id_count = 0
+        self.high_thresh = high_thresh
+        self.low_thresh = low_thresh
+        self.max_time_lost = max_time_lost
+        
+        print(f"ByteTracker initialized: high_thresh={high_thresh}, low_thresh={low_thresh}, max_time_lost={max_time_lost}")
+    
     def update(self, detections):
         self.frame_id += 1
+        activated_starcks = []
+        refind_stracks = []
+        lost_stracks = []
+        removed_stracks = []
         
-        activated_tracks = []
-        refined_tracks = []
-        lost_tracks = []
+        dets_high = [d for d in detections if d['confidence'] >= self.high_thresh]
+        dets_low = [d for d in detections if self.low_thresh <= d['confidence'] < self.high_thresh]
         
-        for track in self.tracked_tracks:
-            track.predict()
+        stracks_high = []
+        for d in dets_high:
+            x1, y1, x2, y2 = d['bbox']
+            stracks_high.append(STrack([x1, y1, x2 - x1, y2 - y1], d['confidence']))
         
-        track_pool = self.tracked_tracks + self.lost_tracks
+        stracks_low = []
+        for d in dets_low:
+            x1, y1, x2, y2 = d['bbox']
+            stracks_low.append(STrack([x1, y1, x2 - x1, y2 - y1], d['confidence']))
         
-        if len(track_pool) > 0:
-            iou_dists = self.iou_distance(track_pool, detections)
-            if iou_dists.size > 0:
-                track_indices, detection_indices = linear_sum_assignment(iou_dists)
-                for track_idx, detection_idx in zip(track_indices, detection_indices):
-                    if iou_dists[track_idx, detection_idx] <= 1 - self.match_thresh:
-                        track = track_pool[track_idx]
-                        track.update(detections[detection_idx])
-                        activated_tracks.append(track)
-                        if track in self.lost_tracks:
-                            self.lost_tracks.remove(track)
-                        refined_tracks.append(track)
+        for strack in self.tracked_stracks:
+            strack.predict()
         
-        for track in self.tracked_tracks:
-            if track not in refined_tracks:
-                track.time_since_update += 1
-                if track.time_since_update > self.track_buffer:
-                    self.lost_tracks.append(track)
-                else:
-                    lost_tracks.append(track)
+        dists = iou_distance(self.tracked_stracks, stracks_high)
+        matches, u_track, u_detection = self.linear_assignment(dists, 0.8)
         
-        for detection in detections:
-            if detection['confidence'] >= self.track_thresh:
-                track = Track(detection, self.next_id)
-                self.next_id += 1
-                activated_tracks.append(track)
+        for i, j in matches:
+            track = self.tracked_stracks[i]
+            det = stracks_high[j]
+            track.update(det)
+            activated_starcks.append(track)
         
-        self.tracked_tracks = activated_tracks + lost_tracks
+        unmatched_tracks = [self.tracked_stracks[i] for i in u_track]
+        dists = iou_distance(unmatched_tracks, stracks_low)
+        matches, u_track, u_detection_low = self.linear_assignment(dists, 0.5)
         
-        return self.tracked_tracks
+        for i, j in matches:
+            track = unmatched_tracks[i]
+            det = stracks_low[j]
+            track.update(det)
+            activated_starcks.append(track)
+        
+        for i in u_track:
+            track = unmatched_tracks[i]
+            track.state = 'lost'
+            lost_stracks.append(track)
+        
+        for i in u_detection:
+            track = stracks_high[i]
+            if track.score >= self.high_thresh:
+                self.track_id_count += 1
+                track.activate(self.frame_id, self.track_id_count)
+                activated_starcks.append(track)
+        
+        for track in self.lost_stracks:
+            track.time_since_update += 1
+            if track.time_since_update > self.max_time_lost:
+                track.state = 'removed'
+                removed_stracks.append(track)
+        
+        self.tracked_stracks = [t for t in self.tracked_stracks if t.state == 'tracked'] + activated_starcks
+        self.lost_stracks = [t for t in self.lost_stracks if t.state == 'lost'] + lost_stracks
+        self.removed_stracks = [t for t in self.removed_stracks if t.state == 'removed'] + removed_stracks
+        
+        output = []
+        for t in self.tracked_stracks:
+            if t.is_activated:
+                output.append({
+                    'track_id': t.track_id,
+                    'bbox': [int(x) for x in t.tlbr],
+                    'confidence': t.score,
+                    'state': t.state
+                })
+        
+        return output
+    
+    def linear_assignment(self, cost_matrix, thresh):
+        if cost_matrix.size == 0:
+            return [], list(range(cost_matrix.shape[0])), list(range(cost_matrix.shape[1]))
+        
+        rows, cols = linear_sum_assignment(cost_matrix)
+        matches = [(r, c) for r, c in zip(rows, cols) if cost_matrix[r, c] < thresh]
+        u_track = [r for r in range(cost_matrix.shape[0]) if r not in [m[0] for m in matches]]
+        u_det = [c for c in range(cost_matrix.shape[1]) if c not in [m[1] for m in matches]]
+        
+        return matches, u_track, u_det
 
 def process_tracking(detections_path, output_path):
     with open(detections_path, 'r') as f:
         all_detections = json.load(f)
     
-    tracker = ByteTracker()
+    tracker = ByteTracker(high_thresh=0.6, low_thresh=0.1, max_time_lost=30)
     all_tracklets = []
     
-    for frame_data in tqdm(all_detections, desc="Tracking players"):
-        detections = frame_data['detections']
-        tracks = tracker.update(detections)
-        
-        frame_tracklets = {
-            "frame_id": frame_data['frame_id'],
-            "tracks": []
-        }
-        
-        for track in tracks:
-            frame_tracklets["tracks"].append({
-                "track_id": track.track_id,
-                "bbox": track.bbox,
-                "confidence": track.confidence,
-                "age": track.age,
-                "hits": track.hits
-            })
-        
-        all_tracklets.append(frame_tracklets)
+    with tqdm(total=len(all_detections), desc="Stage 2: Advanced Tracking") as pbar:
+        for frame_data in all_detections:
+            frame_id = frame_data['frame_id']
+            detections = frame_data['detections']['players']
+            
+            tracks = tracker.update(detections)
+            
+            frame_tracklets = {
+                "frame_id": frame_id,
+                "tracks": tracks
+            }
+            
+            all_tracklets.append(frame_tracklets)
+            pbar.update(1)
     
     with open(output_path, 'w') as f:
-        json.dump(all_tracklets, f)
+        json.dump(all_tracklets, f, indent=2)
+    
+    print(f"Tracking complete. Saved to {output_path}")
+    print(f"Total tracklets: {len(all_tracklets)} frames")
     
     return all_tracklets
 
