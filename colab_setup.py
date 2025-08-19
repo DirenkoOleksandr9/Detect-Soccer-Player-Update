@@ -1,6 +1,74 @@
 import os
 import subprocess
 import sys
+import numpy as np
+from kalman_filter import KalmanFilter
+
+# FIXED STrack class for Colab notebook
+# Copy this into your Colab notebook to replace the broken STrack class
+
+class STrack():
+    """A single tracked object with state managed by a Kalman Filter."""
+    def __init__(self, tlwh, score):
+        self.tlwh = np.asarray(tlwh, dtype=np.float32)
+        self.score = score
+        self.kalman_filter = self.init_kalman_filter()
+        
+        # Initialize Kalman Filter state manually (FIXED)
+        initial_state = self.tlwh_to_xyah(self.tlwh)
+        self.mean = np.array([initial_state[0], initial_state[1], initial_state[2], initial_state[3], 0, 0, 0, 0], dtype=np.float32)
+        self.covariance = np.eye(8) * 10
+
+        self.track_id = 0
+        self.state = 'new'
+        self.is_activated = False
+        self.frame_id = 0
+        self.start_frame = 0
+        self.time_since_update = 0
+
+    def init_kalman_filter(self):
+        kf = KalmanFilter(dim_x=8, dim_z=4)
+        kf.F = np.array([[1,0,0,0,1,0,0,0], [0,1,0,0,0,1,0,0], [0,0,1,0,0,0,1,0], [0,0,0,1,0,0,0,1],
+                        [0,0,0,0,1,0,0,0], [0,0,0,0,0,1,0,0], [0,0,0,0,0,0,1,0], [0,0,0,0,0,0,0,1]])
+        kf.H = np.array([[1,0,0,0,0,0,0,0], [0,1,0,0,0,0,0,0], [0,0,1,0,0,0,0,0], [0,0,0,1,0,0,0,0]])
+        kf.R[2:,2:] *= 10.
+        kf.P[4:,4:] *= 1000.
+        kf.P *= 10.
+        kf.Q[-1,-1] *= 0.01
+        kf.Q[4:,4:] *= 0.01
+        return kf
+
+    def tlwh_to_xyah(self, tlwh):
+        ret = tlwh.copy()
+        ret[:2] += ret[2:] / 2
+        ret[2] /= ret[3]
+        return ret
+
+    def predict(self):
+        self.mean, self.covariance = self.kalman_filter.predict(self.mean, self.covariance)
+
+    def update(self, detection_tlwh, score):
+        self.mean, self.covariance = self.kalman_filter.update(
+            self.mean, self.covariance, self.tlwh_to_xyah(detection_tlwh))
+        self.score = score
+        self.state = 'tracked'
+        self.is_activated = True
+        self.time_since_update = 0
+
+    def activate(self, frame_id, track_id):
+        self.track_id = track_id
+        self.frame_id = frame_id
+        self.start_frame = frame_id
+        self.state = 'tracked'
+        self.is_activated = True
+
+    @property
+    def tlbr(self):
+        ret = self.tlwh.copy()
+        ret[2:] += ret[:2]
+        return ret
+
+print("✅ Fixed STrack class ready to copy into Colab notebook")
 
 def install_requirements():
     print("Installing required packages...")
