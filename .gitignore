@@ -181,3 +181,4 @@ models/
 weights/
 checkpoints/
 runs/
+*.pth.tar
