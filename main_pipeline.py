@@ -6,7 +6,7 @@ from bytetrack_tracker import process_tracking
 from reid_system import AdvancedPlayerReID
 from motion_compensation import apply_gmc_to_pipeline
 from stitch_tracklets import stitch_tracklets_offline
-from event_detection import AdvancedEventDetector
+from advanced_event_detection import AdvancedEventDetector
 from video_assembly import VideoAssembler
 from cerebrus_tracker import CerebrusTracker, process_video_with_cerebrus
 
@@ -91,9 +91,18 @@ def run_full_pipeline(video_path, output_dir, target_jersey=None, tracking_mode=
         
         # Stage 6: Event Detection
         print("\n⚡ Stage 6: Advanced Event Detection")
-        event_detector = AdvancedEventDetector()
-        events_path = os.path.join(output_dir, "player_events.json")
-        event_detector.detect_events(stitched_tracks_path, video_path, events_path, target_jersey)
+        event_detector = AdvancedEventDetector(width, height, fps)
+        events_path = os.path.join(output_dir, "events.json")
+        event_detector.detect_events(stitched_tracks_path, events_path)
+        
+        # Filter events for target player
+        player_events_path = os.path.join(output_dir, "player_events.json")
+        if target_jersey:
+            event_detector.filter_player_events(events_path, target_jersey, player_events_path)
+        else:
+            # If no target jersey, copy all events
+            import shutil
+            shutil.copy(events_path, player_events_path)
         
         # Stage 7: Video Assembly
         print("\n🎬 Stage 7: Professional Video Assembly")
