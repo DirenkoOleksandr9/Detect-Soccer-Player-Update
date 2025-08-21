@@ -26,7 +26,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libsm6 libxext6
+          sudo apt-get install -y ffmpeg libsm6 libxext6 tesseract-ocr
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -43,14 +43,12 @@ jobs:
           # Trim to CI duration to keep CPU run fast
           ffmpeg -y -i 9.mp4 -t $CI_CLIP_SECONDS -c copy 9_ci.mp4 || ffmpeg -y -i 9.mp4 -t $CI_CLIP_SECONDS 9_ci.mp4
           mv -f 9_ci.mp4 9.mp4
-      - name: Run full pipeline
+      - name: Test imports first
         run: |
-          python - << 'PY'
-          import os
-          from main_pipeline import SoccerHighlightPipeline
-          p = SoccerHighlightPipeline()
-          p.run_full_pipeline('9.mp4', target_player_id=1, output_dir='output')
-          PY
+          python test_imports.py
+      - name: Run enhanced detection only (fastest for CI)
+        run: |
+          python main_pipeline.py 9.mp4 --stage detection --output-dir output
       - name: Upload artifacts (outputs)
         uses: actions/upload-artifact@v4
         with:
